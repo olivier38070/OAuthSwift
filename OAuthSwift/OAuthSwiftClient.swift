@@ -74,6 +74,40 @@ public class OAuthSwiftClient {
         self.multiPartRequest(urlString, method: "POST", parameters: parameters, image: image, success: success, failure: failure)
     }
     
+    // smugmug doc : https://api.smugmug.com/api/v2/doc/reference/upload.html
+    
+    // upload an image to a smugmug album
+    public func uploadImage(urlString: String, parameters: Dictionary<String, AnyObject>, image: NSData, success: OAuthSwiftHTTPRequest.SuccessHandler?, failure: OAuthSwiftHTTPRequest.FailureHandler?) {
+        
+        let url: String = urlString
+        let method: String = "POST"
+        
+        if let url = NSURL(string: url) {
+            
+            let request = OAuthSwiftHTTPRequest(URL: url, method: method, parameters: parameters)
+            if self.credential.oauth2 {
+                request.headers = ["Authorization": "Bearer \(self.credential.oauth_token)"]
+            } else {
+                //let str = ["Authorization": self.encodeParameters(method, url: url, parameters: parameters, credential: self.credential)]
+                //request.headers == str
+                //                var str = ["Authorization": OAuthSwiftClient.authorizationHeaderForMethod(method, url: url, parameters: parameters, credential: self.credential)]
+                var str2 = ["Authorization": self.encodeParameters(method, url: url, parameters: parameters, credential: self.credential)]
+                request.headers =  str2
+            }
+            request.successHandler = success
+            request.failureHandler = failure
+            request.dataEncoding = dataEncoding
+            request.encodeParameters = true
+            
+            request.HTTPBody = image // "\(image)".dataUsingEncoding(NSUTF8StringEncoding)
+            request.contentType = "image/jpeg" //type
+            request.start()
+            
+        }
+        
+    }
+    
+    
     func multiPartRequest(url: String, method: String, parameters: Dictionary<String, AnyObject>, image: NSData, success: OAuthSwiftHTTPRequest.SuccessHandler?, failure: OAuthSwiftHTTPRequest.FailureHandler?) {
         
         
@@ -97,7 +131,7 @@ public class OAuthSwiftClient {
             let type = "multipart/form-data; boundary=\(boundary)"
             let body = self.multiPartBodyFromParams(parmaImage, boundary: boundary)
             
-            request.HTTPBodyMultipart = body
+            request.HTTPBody = body
             request.contentTypeMultipart = type
             request.start()
         }
@@ -156,7 +190,7 @@ public class OAuthSwiftClient {
             let type = "multipart/form-data; boundary=\(boundary)"
             let body = self.multiDataFromObject(parameters, boundary: boundary)
 
-            request.HTTPBodyMultipart = body
+            request.HTTPBody = body
             request.contentTypeMultipart = type
             request.start()
         }
@@ -265,4 +299,99 @@ public class OAuthSwiftClient {
         let sha1 = HMAC.sha1(key: key, message: msg)!
         return sha1.base64EncodedStringWithOptions([])
     }
+    
+    
+    // convert a Dictionary, in array of string, with escaped string
+    func getEscapedArrayParam(parameters: Dictionary<String, AnyObject>) -> [String] {
+        // escape all oauth parameter
+        var encodedParam = [String]()
+        for(k, v) in parameters {
+            let str = k + "=" + (v as! String)
+            let escapedStr = str.stringByAddingPercentEncodingWithAllowedCharacters(.URLHostAllowedCharacterSet())
+            encodedParam.append(escapedStr!)
+        }
+        // sort the result
+        encodedParam.sortInPlace{ $0 < $1 }
+        return encodedParam
+    }
+    
+    // do almost like stringByAddingPercentEncodingWithAllowedCharacters, but take in account more character to be changed in %xyz
+    //!*'();:@&=+$,/?%#[]
+    func escapeString(str: String) -> String {
+        let encoding: NSStringEncoding = NSUTF8StringEncoding
+        // !*'();:@&=+$,/?%#[]
+        let charactersToBeEscaped = ":/?&=;+!@#$()',*" as CFStringRef
+        let charactersToLeaveUnescaped = "[]." as CFStringRef
+        let raw: NSString = str
+        let result = CFURLCreateStringByAddingPercentEscapes(kCFAllocatorDefault, raw, charactersToLeaveUnescaped, charactersToBeEscaped, CFStringConvertNSStringEncodingToEncoding(encoding))
+        return result as String
+    }
+    
+    public func encodeParameters(method: String, url: NSURL, parameters: Dictionary<String, AnyObject>, credential: OAuthSwiftCredential) -> String {
+        
+        // algorithm used : https://dev.twitter.com/oauth/overview/creating-signatures
+        // will add the oauth_signature parameter
+        
+        //define the oauth parameters
+        var authorizationParameters = Dictionary<String, AnyObject>()
+        authorizationParameters["oauth_version"] = OAuth.version
+        authorizationParameters["oauth_consumer_key"] = credential.consumer_key
+        authorizationParameters["oauth_timestamp"] = String(Int64(NSDate().timeIntervalSince1970))
+        authorizationParameters["oauth_nonce"] = (NSUUID().UUIDString as NSString).substringToIndex(8)
+        authorizationParameters["oauth_signature_method"] =  OAuth.signatureMethod
+        // add token is it exist
+        if (credential.oauth_token != ""){
+            authorizationParameters["oauth_token"] = credential.oauth_token
+        }
+        // add additionnal oauth (optionnal) parameters if not already existing
+        // example, oauth_callback, defined when requesting the token
+        for (key, value) in parameters {
+            if key.hasPrefix("oauth_") {
+                authorizationParameters.updateValue(value, forKey: key)
+            }
+        }
+        
+        // escape all oauth parameter
+        let encodedParam = getEscapedArrayParam(authorizationParameters)
+        // convert it into a string, each param separated by &
+        var outputStr:String = ""
+        for v in encodedParam {
+            outputStr += v + "&"
+        }
+        // remove last "&"
+        outputStr.removeAtIndex(outputStr.endIndex.predecessor())
+        // percent encode the oauth sorted, appened, parameters
+        let percentOutput = self.escapeString(outputStr)
+        
+        // build the signature base string
+        let urlPercented = self.escapeString(String(url)) //  String(url).stringByAddingPercentEncodingWithAllowedCharacters(.URLHostAllowedCharacterSet())
+        var signBaseString:String = method + "&" + urlPercented
+        signBaseString += "&" + percentOutput
+        
+        // build the signin key
+        let signingKey = self.escapeString( credential.consumer_secret) + "&" + self.escapeString(credential.oauth_token_secret)
+        
+        // Build the signature
+        let sha1 = HMAC.sha1(key: signingKey.dataUsingEncoding(NSUTF8StringEncoding)!, message: signBaseString.dataUsingEncoding(NSUTF8StringEncoding)!)!
+        let oauth_signature = sha1.base64EncodedStringWithOptions([])
+        authorizationParameters.updateValue(self.escapeString( oauth_signature) , forKey: "oauth_signature")
+        
+        // add the signature to the parameters
+        //encodedParam.append("oauth_signature=" + oauth_signature )
+        //encodedParam.sortInPlace{ $0 < $1 } // not sure it is useful r not
+        
+        // create an array, with escape before =
+        let newrev = authorizationParameters.sort(){ $0.0 < $1.0 }
+        
+        var headerComponents = [String]()
+        for (key, value) in newrev {
+            headerComponents.append("\(key)=\"\(value)\"")
+        }
+        
+        
+        let finalUrl:String =  "OAuth " + headerComponents.joinWithSeparator(",") // headerComponents.joinWithSeparator(", ")
+        return finalUrl
+    }
+    
+    
 }

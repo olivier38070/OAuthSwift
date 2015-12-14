@@ -9,9 +9,18 @@
 import Cocoa
 import OAuthSwift
 
+// Callback management
+public protocol callbackProtocol {
+    func callback( message: String)
+}
+
+
 class ViewController: NSViewController , NSTableViewDelegate, NSTableViewDataSource {
 
+    var delegate: callbackProtocol!
+
     var services = ["Twitter", "Flickr", "Github", "Instagram", "Foursquare", "Fitbit", "Withings", "Linkedin", "Linkedin2", "Dropbox", "Dribbble", "Salesforce", "BitBucket", "GoogleDrive", "Smugmug", "Intuit", "Zaim", "Tumblr", "Slack", "Uber"]
+
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -291,9 +300,12 @@ class ViewController: NSViewController , NSTableViewDelegate, NSTableViewDataSou
         let oauthswift = OAuth1Swift(
             consumerKey:    Smugmug["consumerKey"]!,
             consumerSecret: Smugmug["consumerSecret"]!,
-            requestTokenUrl: "http://api.smugmug.com/services/oauth/getRequestToken.mg",
-            authorizeUrl:    "http://api.smugmug.com/services/oauth/authorize.mg",
-            accessTokenUrl:  "http://api.smugmug.com/services/oauth/getAccessToken.mg"
+            //requestTokenUrl: "http://api.smugmug.com/services/oauth/getRequestToken.mg",
+            //authorizeUrl:    "http://api.smugmug.com/services/oauth/authorize.mg",
+            //accessTokenUrl:  "http://api.smugmug.com/services/oauth/getAccessToken.mg"
+            requestTokenUrl: "https://secure.smugmug.com/services/oauth/1.0a/getRequestToken",
+            authorizeUrl:    "https://secure.smugmug.com/services/oauth/1.0a/authorize?Access=Full&Permissions=Modify",
+            accessTokenUrl:  "https://secure.smugmug.com/services/oauth/1.0a/getAccessToken"
         )
         oauthswift.allowMissingOauthVerifier = true
         // NOTE: Smugmug's callback URL is configured on their site and the one passed in is ignored.
@@ -304,6 +316,50 @@ class ViewController: NSViewController , NSTableViewDelegate, NSTableViewDataSou
                 print(error.localizedDescription)
         })
     }
+    
+    
+
+    
+    func doUploadImageToSmugmug(image: NSData!, token: String, tokenSecret: String, callback: callbackProtocol)     {
+        
+        self.delegate = callback
+        
+        // instanciate the class, and give the token, and api key
+        let user: OAuthSwiftClient = OAuthSwiftClient(consumerKey: Smugmug["consumerKey"]!, consumerSecret: Smugmug["consumerSecret"]!, accessToken: token, accessTokenSecret: tokenSecret)
+
+        
+        // "Content-Length": "\(img.length)", "Content-MD5": "d279895992079e10cd9a330ce2b3e6b1",
+        // "api/v2/node/7HWH8S"
+        let param:[String : AnyObject] = ["X-Smug-AlbumUri": "/api/v2/album/78LV8K", "X-Smug-Version": "v2", "X-Smug-FileName": "test.jpeg", "X-Smug-ResponseType": "JSON"]
+        //object = Dictionary<String, AnyObject>()
+        
+        // do the HTTP request
+        let urlStr:String =  "http://upload.smugmug.com/"
+        user.uploadImage(urlStr , parameters: param, image: image, success: { (data, response) -> Void in
+            
+            // the response data is in data
+            let restStr = NSString(data: data, encoding: NSUTF8StringEncoding)
+            self.showAlertView("upload result", message: String(restStr))
+            
+            // call a delegate or callback to parent
+            // this tell to this parent to refresh the value, located in self.Albums
+            self.delegate.callback( "uploadDone")
+            
+            }, failure: {
+                (error:NSError!) -> Void in
+                print(error.localizedDescription)
+                self.showAlertView( "Error : getAlbums", message: error.localizedDescription)
+        })
+        
+    }
+    
+
+    
+    
+    
+    
+    
+    
 
     func doOAuthDropbox(){
         let oauthswift = OAuth2Swift(
@@ -338,6 +394,7 @@ class ViewController: NSViewController , NSTableViewDelegate, NSTableViewDataSou
         })
     }
 
+    
     func doOAuthDribbble(){
         let oauthswift = OAuth2Swift(
             consumerKey:    Dribbble["consumerKey"]!,
